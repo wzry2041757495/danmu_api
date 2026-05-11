@@ -37,9 +37,9 @@ export default class AnimekoSource extends BaseSource {
    */
   async search(keyword) {
     if (globals.useBangumiData) {
-      const localMatches = searchBangumiData(keyword, ['bangumi']);
+      const localMatches = await searchBangumiData(keyword, ['bangumi']);
       if (localMatches.length > 0) {
-        log("info", `[Animeko] Bangumi-Data 命中 ${localMatches.length} 条数据`);
+        log("info", `[Animeko] Bangumi-Data 本地命中 ${localMatches.length} 条数据`);
         return this.transformResults(localMatches.map(m => {
           const displayTitle = m.titles.find(t => t && t.includes(keyword)) || m.titles[1] || m.title;
           const finalTitle = displayTitle + (m.titleSuffix || '');
@@ -52,7 +52,7 @@ export default class AnimekoSource extends BaseSource {
             date: m.begin,
             score: 0,
             platform: m.typeStr, 
-            aliases: m.titles
+            aliases: [...m.titles]
           };
         }));
       }
@@ -284,12 +284,12 @@ export default class AnimekoSource extends BaseSource {
       const titleSuffix = item._relation_mark ? ` ${item._relation_mark}` : "";
 
       // 提取别名列表 (用于合并工具进行模糊匹配)
-      const aliases = [];
+      const aliases = Array.isArray(item.aliases) ? [...item.aliases] : [];
       if (item.infobox && Array.isArray(item.infobox)) {
           item.infobox.forEach(info => {
               if (info.key === '别名' && Array.isArray(info.value)) {
                   info.value.forEach(v => {
-                      if (v && v.v) aliases.push(v.v);
+                      if (v && v.v && !aliases.includes(v.v)) aliases.push(v.v);
                   });
               }
           });

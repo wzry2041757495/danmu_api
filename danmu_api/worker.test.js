@@ -33,6 +33,8 @@ import { VercelHandler } from "./configs/handlers/vercel-handler.js";
 import { NetlifyHandler } from "./configs/handlers/netlify-handler.js";
 import { CloudflareHandler } from "./configs/handlers/cloudflare-handler.js";
 import { EdgeoneHandler } from "./configs/handlers/edgeone-handler.js";
+import { HuggingfaceHandler } from "./configs/handlers/huggingface-handler.js";
+import { HandlerFactory } from "./configs/handlers/handler-factory.js";
 import { Globals } from "./configs/globals.js";
 import { addAnime, addEpisode } from "./utils/cache-util.js";
 import { convertToAsciiSum } from "./utils/codec-util.js";
@@ -135,6 +137,72 @@ test('worker.js API endpoints', async (t) => {
     const body = await parseResponse(res);
 
     assert.equal(res.status, 200);
+  });
+
+  await t.test('HandlerFactory should support Hugging Face Spaces', async () => {
+    const handler = await HandlerFactory.getHandler('huggingface');
+
+    assert(handler instanceof HuggingfaceHandler);
+    assert(HandlerFactory.getSupportedPlatforms().includes('huggingface'));
+  });
+
+  await t.test('HuggingfaceHandler should call Space variables and restart APIs', async () => {
+    const env = {
+      DEPLOY_PLATFROM_ACCOUNT: 'hf-user',
+      DEPLOY_PLATFROM_PROJECT: 'hf-space',
+      DEPLOY_PLATFROM_TOKEN: 'hf-token'
+    };
+    Globals.init(env);
+    const globals = Globals.getConfig();
+    const handler = new HuggingfaceHandler();
+
+    await withMockFetch(async (url, options) => {
+      if (url === 'https://huggingface.co/api/spaces/hf-user/hf-space/variables' && options.method === 'POST') {
+        assert.equal(options.headers.Authorization, 'Bearer hf-token');
+        assert.deepEqual(JSON.parse(options.body), { key: 'DANMU_LIMIT', value: '1' });
+        return mockJsonResponse({}, url);
+      }
+      if (url === 'https://huggingface.co/api/spaces/hf-user/hf-space/variables' && options.method === 'DELETE') {
+        assert.equal(options.headers.Authorization, 'Bearer hf-token');
+        assert.deepEqual(JSON.parse(options.body), { key: 'DANMU_LIMIT' });
+        return mockJsonResponse({}, url);
+      }
+      if (url === 'https://huggingface.co/api/spaces/hf-user/hf-space/restart' && options.method === 'POST') {
+        assert.equal(options.headers.Authorization, 'Bearer hf-token');
+        return mockJsonResponse({}, url);
+      }
+      throw new Error(`Unexpected request: ${options.method} ${url}`);
+    }, async () => {
+      assert.equal(await handler.setEnv('DANMU_LIMIT', 1), true);
+      assert.equal(globals.env.DANMU_LIMIT, 1);
+      assert.equal(await handler.delEnv('DANMU_LIMIT'), true);
+      assert.equal(await handler.deploy(), true);
+    });
+  });
+
+  await t.test('BilibiliSource should resolve b23.tv short links from redirect location', async () => {
+    Globals.init({});
+    const source = new BilibiliSource();
+    const shortUrl = 'https://b23.tv/BV1GJ411x7h7';
+    const targetUrl = 'https://www.bilibili.com/video/BV1GJ411x7h7';
+    let seenRedirectMode;
+
+    await withMockFetch(async (url, options) => {
+      assert.equal(url, shortUrl);
+      seenRedirectMode = options.redirect;
+      return {
+        ok: false,
+        status: 302,
+        url: shortUrl,
+        headers: new Headers({ location: targetUrl }),
+        text: async () => '',
+      };
+    }, async () => {
+      const resolvedUrl = await source.resolveB23Link(shortUrl);
+      assert.equal(resolvedUrl, targetUrl);
+    });
+
+    assert.equal(seenRedirectMode, 'manual');
   });
 
   // 测试标题解析
